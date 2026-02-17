@@ -20,7 +20,7 @@ pip install -r requirements.txt
 |-----|-------|--------|
 | 1 | Scaffolding, config, models, rules, PDF parser | Complete |
 | 2 | Tree-sitter code analysis engine + pattern matching | Complete |
-| 3 | LLM integration (Ollama) + ChromaDB | Pending |
+| 3 | LLM integration (Ollama) + ChromaDB | Complete |
 | 4 | FastAPI application + endpoints | Pending |
 | 5 | Full integration (end-to-end) | Pending |
 | 6 | Testing + bug fixes | Pending |
@@ -420,4 +420,182 @@ Flow:
        |            3. Convert matches -> Finding objects
        v
   ScanResult (findings, summary, metadata)
+```
+
+---
+
+## Day 3: LLM Integration — Ollama Client, LLM Analyzer, ChromaDB Vector Store
+
+### What Was Built
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Ollama Client | `src/core/llm_client.py` | Connects to local Ollama instance, sends prompts, parses JSON responses defensively, handles retries and context window limits |
+| LLM Analyzer | `src/core/llm_analyzer.py` | Uses LLM for deep security analysis: per-rule contextual scanning, false positive validation, code complexity detection |
+| Vector Store | `src/core/vector_store.py` | ChromaDB-backed semantic search — embeds security rules, finds the most relevant rules for a given code snippet |
+
+### How to Run & Verify Day 3
+
+**Prerequisites**: Day 1-2 setup complete, Ollama installed and running
+
+#### Verify 1: Ollama client connects and checks model availability
+
+```bash
+# First, make sure Ollama is running:
+ollama serve &  # if not already running
+
+# Pull the dev model (if not already pulled):
+ollama pull deepseek-coder:6.7b
+
+# Verify the client:
+python -c "
+from src.core.llm_client import OllamaClient
+
+client = OllamaClient()
+print(f'LLM available: {client.is_available()}')
+print(f'Token estimate for 400 chars: {client.estimate_tokens(\"x\" * 400)}')
+print(f'Fits context: {client.fits_context(\"x\" * 1000)}')
+print('OllamaClient OK')
+"
+```
+
+**Expected**: `LLM available: True` (if deepseek-coder:6.7b is pulled), token estimate ~100, fits context True.
+
+#### Verify 2: LLM analyzer complexity detection (no LLM needed)
+
+```bash
+python -c "
+from src.core.llm_analyzer import LLMAnalyzer
+from src.core.tree_sitter_parser import TreeSitterParser
+
+parser = TreeSitterParser()
+analyzer = LLMAnalyzer()
+
+# Create test code with a very long function
+long_func = 'def process_data(a, b, c, d, e, f, g, h):\n' + '    x = 1\n' * 60
+analysis = parser.parse_text(long_func, 'test_complex.py')
+
+issues = analyzer.detect_complexity_issues(analysis)
+print(f'Complexity issues found: {len(issues)}')
+for issue in issues:
+    print(f'  - {issue.function_name}: {issue.issue[:80]}...')
+
+findings = analyzer.complexity_to_findings(issues)
+print(f'Converted to {len(findings)} findings')
+for f in findings:
+    print(f'  [{f.severity.value}] {f.title}')
+print('Complexity detection OK')
+"
+```
+
+**Expected**: 2 complexity issues — function too long (61 lines > 50 threshold) and too many parameters (8 > 7 threshold).
+
+#### Verify 3: LLM-powered code analysis (requires Ollama + model)
+
+```bash
+python -c "
+from src.core.llm_analyzer import LLMAnalyzer
+from src.models import SecurityRule, Severity, DetectionMethod
+
+analyzer = LLMAnalyzer()
+if not analyzer.is_available:
+    print('LLM not available — skipping (pull deepseek-coder:6.7b first)')
+else:
+    rule = SecurityRule(
+        rule_id='TEST-LLM-001',
+        title='SQL Injection',
+        category='Injection',
+        severity=Severity.CRITICAL,
+        description='Detect SQL injection via string concatenation',
+        detection=DetectionMethod(
+            llm_prompt='Check if user input is concatenated into SQL queries without parameterization'
+        ),
+    )
+
+    code = '''
+def get_user(user_id):
+    query = f\"SELECT * FROM users WHERE id = {user_id}\"
+    return db.execute(query)
+'''
+
+    finding = analyzer.analyze_code_with_rule(code, rule, 'test.py')
+    if finding:
+        print(f'Finding: [{finding.severity.value}] {finding.title}')
+        print(f'  Line: {finding.line_number}')
+        print(f'  Description: {finding.description[:100]}')
+    else:
+        print('No finding (LLM did not flag this — may vary by model)')
+    print('LLM analysis OK')
+"
+```
+
+**Expected**: LLM detects the SQL injection and returns a Finding (results may vary depending on model).
+
+#### Verify 4: ChromaDB vector store indexes and queries rules
+
+```bash
+python -c "
+from src.core.vector_store import VectorStore
+from src.core.rule_loader import RuleLoader
+
+# Load rules
+loader = RuleLoader()
+loader.load_builtin_rules()
+print(f'Loaded {len(loader.rules)} rules')
+
+# Index into ChromaDB
+store = VectorStore(persist_dir='/tmp/test_vector_db')
+indexed = store.index_rules(loader.rules)
+print(f'Indexed {indexed} rules into ChromaDB')
+print(f'Collection size: {store.rule_count}')
+
+# Query with a code snippet
+code = '''
+password = \"admin123\"
+db_connection = connect(host, user, password)
+'''
+relevant = store.query_relevant_rules(code, n_results=3)
+print(f'Top 3 relevant rules for hardcoded password code:')
+for r in relevant:
+    print(f'  [{r.severity.value}] {r.rule_id}: {r.title}')
+
+# Cleanup
+store.clear()
+print('VectorStore OK')
+"
+```
+
+**Expected**: 30 rules indexed, query returns rules related to hardcoded credentials/authentication.
+
+### Architecture Notes (Day 3)
+
+```
+src/core/
+├── llm_client.py        # Ollama connection + prompt/response handling
+├── llm_analyzer.py      # LLM-powered security analysis + complexity
+├── vector_store.py      # ChromaDB semantic rule matching
+├── analyzer.py          # (Day 2) Orchestrator
+├── pattern_matcher.py   # (Day 2) Regex engine
+├── rule_loader.py       # (Day 2) JSON rule loading
+├── tree_sitter_parser.py # (Day 2) AST parser
+└── pdf_parser.py        # (Day 1) PDF extraction
+
+Three-layer scanning pipeline:
+  1. Regex (fast)    — PatternMatcher scans all files against 25 regex rules
+  2. Semantic (smart) — VectorStore finds relevant rules per code snippet
+  3. LLM (deep)      — LLMAnalyzer does contextual analysis + validation
+
+  Code Snippet
+       |
+  VectorStore.query_relevant_rules()
+       |  (top N semantically similar rules)
+       v
+  LLMAnalyzer.analyze_code_with_rules()
+       |  (LLM confirms/denies vulnerability)
+       v
+  Findings (high confidence, low false-positive rate)
+
+Additional:
+  - LLMAnalyzer.validate_finding() — validates regex findings to reduce false positives
+  - LLMAnalyzer.detect_complexity_issues() — flags overly complex functions (no LLM needed)
 ```
