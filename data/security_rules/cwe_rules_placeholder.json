@@ -1,0 +1,44 @@
+[
+  {
+    "rule_id": "CWE-079-001",
+    "title": "Cross-site Scripting (XSS) [PLACEHOLDER]",
+    "category": "CWE Top 25",
+    "severity": "HIGH",
+    "description": "PLACEHOLDER - Full CWE Top 25 rules to be implemented in Phase 2. See OWASP-A03-003 for current XSS detection.",
+    "cwe_id": "CWE-79",
+    "owasp_category": "A03",
+    "compliance": {"iso_27001": [], "pci_dss": [], "soc_2": []},
+    "detection": {"pattern": null, "ast_query": null, "llm_prompt": null},
+    "examples": null,
+    "remediation": "Phase 2 implementation pending.",
+    "references": ["https://cwe.mitre.org/data/definitions/79.html"]
+  },
+  {
+    "rule_id": "CWE-089-001",
+    "title": "SQL Injection [PLACEHOLDER]",
+    "category": "CWE Top 25",
+    "severity": "CRITICAL",
+    "description": "PLACEHOLDER - Full CWE Top 25 rules to be implemented in Phase 2. See OWASP-A03-001 for current SQL injection detection.",
+    "cwe_id": "CWE-89",
+    "owasp_category": "A03",
+    "compliance": {"iso_27001": [], "pci_dss": [], "soc_2": []},
+    "detection": {"pattern": null, "ast_query": null, "llm_prompt": null},
+    "examples": null,
+    "remediation": "Phase 2 implementation pending.",
+    "references": ["https://cwe.mitre.org/data/definitions/89.html"]
+  },
+  {
+    "rule_id": "CWE-798-001",
+    "title": "Hard-coded Credentials [PLACEHOLDER]",
+    "category": "CWE Top 25",
+    "severity": "CRITICAL",
+    "description": "PLACEHOLDER - Full CWE Top 25 rules to be implemented in Phase 2. See OWASP-A02-001 for current detection.",
+    "cwe_id": "CWE-798",
+    "owasp_category": "A02",
+    "compliance": {"iso_27001": [], "pci_dss": [], "soc_2": []},
+    "detection": {"pattern": null, "ast_query": null, "llm_prompt": null},
+    "examples": null,
+    "remediation": "Phase 2 implementation pending.",
+    "references": ["https://cwe.mitre.org/data/definitions/798.html"]
+  }
+]
