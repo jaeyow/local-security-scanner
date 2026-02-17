@@ -1,4 +1,14 @@
-"""Code analyzer — orchestrates scanning a codebase against security rules."""
+"""Code analyzer — orchestrates the three-layer scanning pipeline.
+
+Pipeline:
+  1. Regex (fast)    — PatternMatcher scans all files against rules with patterns
+  2. Semantic (smart) — VectorStore finds relevant rules per code snippet
+  3. LLM (deep)      — LLMAnalyzer does contextual analysis + validation
+
+Additionally:
+  - Complexity detection via tree-sitter metrics (no LLM needed)
+  - False positive filtering via LLM validation of regex findings
+"""
 
 from datetime import datetime
 from pathlib import Path
@@ -7,11 +17,12 @@ from typing import Dict, List, Optional
 from loguru import logger
 
 from src.config import get_settings
+from src.core.llm_analyzer import LLMAnalyzer
 from src.core.pattern_matcher import PatternMatch, PatternMatcher
 from src.core.rule_loader import RuleLoader
 from src.core.tree_sitter_parser import FileAnalysis, TreeSitterParser
+from src.core.vector_store import VectorStore
 from src.models import (
-    ComplianceMapping,
     Finding,
     Priority,
     ScanMetadata,
@@ -33,33 +44,74 @@ from src.utils.helpers import (
 class CodeAnalyzer:
     """Orchestrates security scanning of a codebase.
 
-    Combines regex pattern matching and tree-sitter AST analysis
-    to detect security vulnerabilities against loaded rules.
+    Combines regex pattern matching, tree-sitter AST analysis,
+    ChromaDB semantic rule matching, and LLM-powered deep analysis.
     """
 
-    def __init__(self, rules_dir: Optional[str] = None) -> None:
-        """Initialize the analyzer with rule loader, matcher, and parser.
+    def __init__(
+        self,
+        rules_dir: Optional[str] = None,
+        enable_llm: bool = True,
+    ) -> None:
+        """Initialize the analyzer with all scanning components.
 
         Args:
             rules_dir: Path to security rules directory.
                 Defaults to settings.rules_dir.
+            enable_llm: Whether to enable LLM-powered analysis.
+                If False or Ollama is unavailable, falls back to regex-only.
         """
         settings = get_settings()
         self._rules_dir = rules_dir or str(settings.rules_dir)
+        self._enable_llm = enable_llm
 
+        # Core components (always available)
         self._rule_loader = RuleLoader(self._rules_dir)
         self._ts_parser = TreeSitterParser()
-        self._matcher: Optional[PatternMatcher] = None
 
+        # Load rules and init pattern matcher
         self._rule_loader.load_builtin_rules()
         rules_with_patterns = self._rule_loader.get_rules_with_patterns()
         self._matcher = PatternMatcher(rules_with_patterns)
 
+        # LLM components (optional, graceful degradation)
+        self._llm_analyzer: Optional[LLMAnalyzer] = None
+        self._vector_store: Optional[VectorStore] = None
+        self._llm_available = False
+
+        if enable_llm:
+            self._init_llm_components()
+
         logger.info(
-            "CodeAnalyzer initialized: {} rules loaded, {} with patterns",
+            "CodeAnalyzer initialized: {} rules, {} with patterns, LLM: {}",
             len(self._rule_loader.rules),
             self._matcher.rule_count,
+            "enabled" if self._llm_available else "disabled",
         )
+
+    def _init_llm_components(self) -> None:
+        """Initialize LLM analyzer and vector store if available."""
+        try:
+            self._llm_analyzer = LLMAnalyzer()
+            self._llm_available = self._llm_analyzer.is_available
+
+            if self._llm_available:
+                logger.info("LLM is available — enabling deep analysis")
+            else:
+                logger.warning(
+                    "LLM not reachable — falling back to regex + complexity only"
+                )
+
+            # Always init vector store (uses local embeddings, no LLM needed)
+            self._vector_store = VectorStore()
+            self._vector_store.index_rules(self._rule_loader.rules)
+            logger.info(
+                "VectorStore indexed {} rules",
+                self._vector_store.rule_count,
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize LLM components: {}", e)
+            self._llm_available = False
 
     def scan_codebase(
         self,
@@ -67,7 +119,7 @@ class CodeAnalyzer:
         exclude_patterns: Optional[List[str]] = None,
         extensions: Optional[List[str]] = None,
     ) -> ScanResult:
-        """Scan an entire codebase and produce a ScanResult.
+        """Scan an entire codebase using the three-layer pipeline.
 
         Args:
             codebase_path: Root directory of the codebase to scan.
@@ -77,11 +129,12 @@ class CodeAnalyzer:
         Returns:
             ScanResult with all findings and metadata.
         """
-        settings = get_settings()
         root = Path(codebase_path).resolve()
 
         if not root.exists() or not root.is_dir():
-            raise ValueError(f"Codebase path is not a valid directory: {codebase_path}")
+            raise ValueError(
+                f"Codebase path is not a valid directory: {codebase_path}"
+            )
 
         if exclude_patterns is None:
             exclude_patterns = [
@@ -97,33 +150,102 @@ class CodeAnalyzer:
 
         logger.info("Starting scan {} on {}", scan_id, root)
 
-        # Collect files to scan
+        # Collect files
         files = self._collect_files(root, extensions, exclude_patterns)
         logger.info("Found {} files to scan", len(files))
 
-        # Run pattern matching
+        # === Layer 1: Regex pattern matching ===
         all_matches: List[PatternMatch] = []
-        file_analyses: List[FileAnalysis] = []
+        file_analyses: Dict[str, FileAnalysis] = {}
         language_stats: Dict[str, int] = {}
         total_lines = 0
 
         for file_path in files:
-            # Pattern matching
             matches = self._matcher.scan_file(file_path)
             all_matches.extend(matches)
 
-            # Tree-sitter analysis
             if file_path.suffix == ".py":
                 analysis = self._ts_parser.parse_file(file_path)
-                file_analyses.append(analysis)
+                file_analyses[str(file_path)] = analysis
 
-            # Stats
             lang = detect_language(file_path) or "Unknown"
             language_stats[lang] = language_stats.get(lang, 0) + 1
             total_lines += count_lines(file_path)
 
-        # Convert matches to findings
-        findings = self._matches_to_findings(all_matches, scan_id)
+        # Convert regex matches to findings
+        regex_findings = self._matches_to_findings(all_matches, scan_id)
+        finding_counter = len(regex_findings)
+
+        logger.info(
+            "Layer 1 (regex): {} findings from {} matches",
+            len(regex_findings),
+            len(all_matches),
+        )
+
+        # === Layer 1.5: Complexity detection (tree-sitter, no LLM) ===
+        complexity_findings: List[Finding] = []
+        if self._llm_analyzer:
+            for fp, analysis in file_analyses.items():
+                issues = self._llm_analyzer.detect_complexity_issues(analysis)
+                if issues:
+                    cf = self._llm_analyzer.complexity_to_findings(issues)
+                    complexity_findings.extend(cf)
+
+        logger.info(
+            "Complexity detection: {} issues found",
+            len(complexity_findings),
+        )
+
+        # === Layer 2+3: Semantic matching + LLM analysis ===
+        llm_findings: List[Finding] = []
+        validated_findings = list(regex_findings)
+
+        if self._llm_available and self._vector_store and self._llm_analyzer:
+            for file_path in files:
+                if file_path.suffix != ".py":
+                    continue
+
+                try:
+                    code = file_path.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+
+                # Layer 2: Query vector store for relevant rules
+                relevant_rules = self._vector_store.query_relevant_rules(
+                    code[:2000], n_results=5
+                )
+
+                # Filter to rules that need LLM analysis
+                # (either LLM-only rules or rules worth deeper inspection)
+                llm_rules = [
+                    r for r in relevant_rules
+                    if r.detection.llm_prompt
+                ]
+
+                if llm_rules:
+                    # Layer 3: LLM deep analysis
+                    file_llm_findings = self._llm_analyzer.analyze_code_with_rules(
+                        code, llm_rules, str(file_path)
+                    )
+                    llm_findings.extend(file_llm_findings)
+
+            logger.info(
+                "Layer 2+3 (semantic + LLM): {} findings from {} files",
+                len(llm_findings),
+                sum(1 for f in files if f.suffix == ".py"),
+            )
+
+            # False positive validation on high-severity regex findings
+            validated_findings = self._validate_regex_findings(
+                regex_findings, files
+            )
+
+        # Combine all findings
+        all_findings = validated_findings + llm_findings + complexity_findings
+
+        # Re-number finding IDs
+        for idx, finding in enumerate(all_findings, start=1):
+            finding.finding_id = generate_finding_id(scan_id, idx)
 
         # Build result
         duration = int((datetime.utcnow() - start_time).total_seconds())
@@ -140,25 +262,30 @@ class CodeAnalyzer:
                 lines_of_code=total_lines,
                 languages=language_stats,
             ),
-            summary=self._build_summary(findings),
-            findings=findings,
+            summary=self._build_summary(all_findings),
+            findings=all_findings,
             files_analyzed=[
                 {
                     "file_path": str(f),
                     "violations": sum(
-                        1 for m in all_matches if m.file_path == str(f)
+                        1 for finding in all_findings
+                        if finding.file_path == str(f)
                     ),
                 }
                 for f in files
-                if any(m.file_path == str(f) for m in all_matches)
+                if any(finding.file_path == str(f) for finding in all_findings)
             ],
         )
 
         logger.info(
-            "Scan {} complete: {} files, {} findings in {}s",
+            "Scan {} complete: {} files, {} findings "
+            "(regex: {}, LLM: {}, complexity: {}) in {}s",
             scan_id,
             len(files),
-            len(findings),
+            len(all_findings),
+            len(validated_findings),
+            len(llm_findings),
+            len(complexity_findings),
             duration,
         )
 
@@ -194,6 +321,64 @@ class CodeAnalyzer:
         matches = self._matcher.scan_text(source, filename)
         scan_id = generate_scan_id()
         return self._matches_to_findings(matches, scan_id)
+
+    def _validate_regex_findings(
+        self,
+        findings: List[Finding],
+        files: List[Path],
+    ) -> List[Finding]:
+        """Use LLM to filter false positives from regex findings.
+
+        Only validates CRITICAL and HIGH severity findings to limit
+        LLM calls. Keeps all findings if LLM is unavailable.
+
+        Args:
+            findings: Regex-detected findings to validate.
+            files: List of scanned file paths.
+
+        Returns:
+            Filtered list with false positives removed.
+        """
+        if not self._llm_available or not self._llm_analyzer:
+            return findings
+
+        validated: List[Finding] = []
+        rejected_count = 0
+
+        for finding in findings:
+            # Only LLM-validate high-severity findings (cost/benefit)
+            if finding.severity not in (Severity.CRITICAL, Severity.HIGH):
+                validated.append(finding)
+                continue
+
+            try:
+                file_path = Path(finding.file_path)
+                if not file_path.exists():
+                    validated.append(finding)
+                    continue
+
+                code = file_path.read_text(encoding="utf-8", errors="ignore")
+                is_real = self._llm_analyzer.validate_finding(code, finding)
+
+                if is_real:
+                    validated.append(finding)
+                else:
+                    rejected_count += 1
+            except Exception as e:
+                logger.debug(
+                    "Validation failed for {}, keeping finding: {}",
+                    finding.finding_id, e,
+                )
+                validated.append(finding)
+
+        if rejected_count:
+            logger.info(
+                "LLM validation: {} false positives removed from {} findings",
+                rejected_count,
+                len(findings),
+            )
+
+        return validated
 
     def _collect_files(
         self,
@@ -270,7 +455,6 @@ class CodeAnalyzer:
             by_severity[sev] = by_severity.get(sev, 0) + 1
             by_category[f.category] = by_category.get(f.category, 0) + 1
 
-        # Simple scoring: start at 100, deduct per finding
         score = max(
             0,
             100

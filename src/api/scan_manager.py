@@ -11,6 +11,7 @@ from src.core.llm_client import OllamaClient
 from src.core.pdf_parser import PDFParser
 from src.core.rule_loader import RuleLoader
 from src.models import ScanResult, ScanStatus
+from src.reports.report_manager import ReportManager
 
 
 class ScanState:
@@ -28,6 +29,7 @@ class ScanState:
         self.status: ScanStatus = ScanStatus.PENDING
         self.progress: int = 0
         self.result: Optional[ScanResult] = None
+        self.report_paths: Dict[str, str] = {}
         self.error: Optional[str] = None
         self.created_at: datetime = datetime.utcnow()
 
@@ -49,6 +51,7 @@ class ScanManager:
         self._pdf_parser = PDFParser()
         self._rule_loader = RuleLoader()
         self._rule_loader.load_builtin_rules()
+        self._report_manager = ReportManager()
 
     @property
     def rules_loaded(self) -> int:
@@ -138,6 +141,23 @@ class ScanManager:
                 ),
             )
             scan_state.result = result
+            scan_state.progress = 90
+
+            # Generate reports
+            try:
+                report_paths = self._report_manager.generate_reports(result)
+                scan_state.report_paths = report_paths
+                logger.info(
+                    "Reports generated for scan {}: {}",
+                    scan_state.scan_id,
+                    list(report_paths.keys()),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Report generation failed for scan {}: {}",
+                    scan_state.scan_id, e,
+                )
+
             scan_state.status = ScanStatus.COMPLETED
             scan_state.progress = 100
             logger.info(
