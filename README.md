@@ -21,7 +21,7 @@ pip install -r requirements.txt
 | 1 | Scaffolding, config, models, rules, PDF parser | Complete |
 | 2 | Tree-sitter code analysis engine + pattern matching | Complete |
 | 3 | LLM integration (Ollama) + ChromaDB | Complete |
-| 4 | FastAPI application + endpoints | Pending |
+| 4 | FastAPI application + Docker Compose | Complete |
 | 5 | Full integration (end-to-end) | Pending |
 | 6 | Testing + bug fixes | Pending |
 | 7 | Docker setup + documentation | Pending |
@@ -598,4 +598,129 @@ Three-layer scanning pipeline:
 Additional:
   - LLMAnalyzer.validate_finding() — validates regex findings to reduce false positives
   - LLMAnalyzer.detect_complexity_issues() — flags overly complex functions (no LLM needed)
+```
+
+---
+
+## Day 4: FastAPI Application + Docker Compose
+
+### What Was Built
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Scan Manager | `src/api/scan_manager.py` | In-memory scan state tracking, background task orchestration, singleton component management |
+| API Routes | `src/api/routes.py` | 5 endpoints: start scan, get status, health check, upload rules PDF, list rules |
+| App Factory | `src/main.py` | FastAPI app with lifespan, CORS, API versioning at `/api/v1` |
+| Dockerfile | `Dockerfile` | Python 3.11-slim container with tree-sitter + WeasyPrint system deps, non-root user |
+| Docker Compose | `docker-compose.yml` | Orchestrates FastAPI container, connects to host Ollama via `host.docker.internal:11434` |
+| Docker Ignore | `.dockerignore` | Excludes .venv, .git, tests, docs, .env from build context |
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/scan` | Start a background scan (returns 202) |
+| `GET` | `/api/v1/scan/{scan_id}` | Get scan status and results |
+| `GET` | `/api/v1/health` | Health check (Ollama, rules, version) |
+| `POST` | `/api/v1/rules/upload` | Upload a PDF to extract security rules |
+| `GET` | `/api/v1/rules` | List all loaded security rules |
+
+### How to Run & Verify Day 4
+
+**Prerequisites**: Day 1-3 setup complete (venv activated, dependencies installed, Ollama running)
+
+#### Option A: Run locally (no Docker)
+
+```bash
+# Start the API server
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+#### Option B: Run with Docker Compose
+
+```bash
+# Make sure Ollama is running on the host
+ollama serve &
+
+# Build and start the container
+docker-compose up --build
+
+# The API is available at http://localhost:8000
+```
+
+#### Verify 1: Health check
+
+```bash
+curl -s http://localhost:8000/api/v1/health | python -m json.tool
+```
+
+**Expected output**:
+```json
+{
+    "status": "healthy",
+    "ollama_connected": true,
+    "scanner_version": "1.0.0",
+    "rules_loaded": 30
+}
+```
+
+Note: `ollama_connected` will be `true` if deepseek-coder:6.7b is pulled and Ollama is running. Status will be "degraded" (not "unhealthy") if Ollama is offline — regex scanning still works.
+
+#### Verify 2: List security rules
+
+```bash
+curl -s http://localhost:8000/api/v1/rules | python -m json.tool | head -20
+```
+
+**Expected**: JSON with `total: 30` and a list of OWASP rules with rule_id, title, category, severity.
+
+#### Verify 3: Start a scan and check results
+
+```bash
+# Start a scan of the src/ directory
+curl -s -X POST "http://localhost:8000/api/v1/scan" \
+  -H "Content-Type: application/json" \
+  -d '{"codebase_path":"src/"}' | python -m json.tool
+
+# Note the scan_id from the response, then check status:
+curl -s "http://localhost:8000/api/v1/scan/{scan_id}" | python -m json.tool
+```
+
+**Expected**: First call returns 202 with `status: "pending"`. Second call (after a second) returns `status: "completed"` with full scan results including findings, summary, and security score.
+
+#### Verify 4: Interactive API docs
+
+Open in your browser:
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+### Architecture Notes (Day 4)
+
+```
+Request Flow:
+  Client (curl / browser / frontend)
+       |
+  FastAPI (src/main.py)
+       |  CORS middleware, /api/v1 prefix
+       v
+  Routes (src/api/routes.py)
+       |  Path validation, request parsing
+       v
+  ScanManager (src/api/scan_manager.py)
+       |  In-memory state, background tasks
+       v
+  CodeAnalyzer (src/core/analyzer.py)
+       |  Pattern matching + tree-sitter AST
+       v
+  ScanResult → JSON response
+
+Docker Architecture:
+  ┌─────────────────────────┐     ┌──────────────────────┐
+  │  Docker Container       │     │  Host Machine (bare)  │
+  │                         │     │                       │
+  │  FastAPI (port 8000)    │────▶│  Ollama (port 11434)  │
+  │  tree-sitter, ChromaDB  │     │  deepseek-coder:6.7b  │
+  │  PyMuPDF, WeasyPrint    │     │  Metal GPU accel      │
+  └─────────────────────────┘     └──────────────────────┘
+        host.docker.internal:11434
 ```

@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: security-scanner
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-coder:6.7b}
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATA_DIR=/app/data
+      - OUTPUT_DIR=/app/outputs
+      - RULES_DIR=/app/data/security_rules
+      - VECTOR_DB_DIR=/app/data/vector_db
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+      - scanner-vector-db:/app/data/vector_db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  scanner-vector-db:
