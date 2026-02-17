@@ -95,6 +95,7 @@ async def get_scan_status(scan_id: str, request: Request) -> ScanStatusResponse:
         status=scan_state.status,
         progress=scan_state.progress,
         result=scan_state.result,
+        report_urls=scan_state.report_paths,
     )
 
 

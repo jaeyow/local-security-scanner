@@ -22,7 +22,7 @@ pip install -r requirements.txt
 | 2 | Tree-sitter code analysis engine + pattern matching | Complete |
 | 3 | LLM integration (Ollama) + ChromaDB | Complete |
 | 4 | FastAPI application + Docker Compose | Complete |
-| 5 | Full integration (end-to-end) | Pending |
+| 5 | Full integration (end-to-end) | Complete |
 | 6 | Testing + bug fixes | Pending |
 | 7 | Docker setup + documentation | Pending |
 
@@ -723,4 +723,171 @@ Docker Architecture:
   │  PyMuPDF, WeasyPrint    │     │  Metal GPU accel      │
   └─────────────────────────┘     └──────────────────────┘
         host.docker.internal:11434
+```
+
+---
+
+## Day 5: Full End-to-End Integration
+
+### What Was Built
+
+Day 5 wires together all components from Days 1-4 into a fully functional three-layer scanning pipeline. Before this, the analyzer only used regex + tree-sitter. Now it also uses ChromaDB semantic search, LLM deep analysis, complexity detection, false positive filtering, and report generation.
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Analyzer Refactor | `src/core/analyzer.py` | Major refactor — wired LLM + VectorStore + complexity detection into `scan_codebase()` with graceful degradation |
+| Scan Manager Update | `src/api/scan_manager.py` | Added ReportManager integration and `report_paths` tracking in scan state |
+| JSON Report | `src/reports/json_report.py` | Generates structured JSON reports from `ScanResult` |
+| Markdown Report | `src/reports/markdown_report.py` | Generates human-readable Markdown reports with executive summary, findings table, severity breakdown |
+| Report Manager | `src/reports/report_manager.py` | Orchestrator that dispatches to format-specific generators, returns `{format: file_path}` |
+| Routes Update | `src/api/routes.py` | Scan status response now includes `report_urls` with paths to generated reports |
+
+### Three-Layer Pipeline (Now Fully Wired)
+
+```
+Layer 1: Regex (fast, broad)
+  PatternMatcher scans all files against 25 regex rules
+       |
+Layer 1.5: Complexity Detection (tree-sitter, no LLM)
+  Flags functions that are too long, too complex, or have too many parameters
+       |
+Layer 2: Semantic Matching (ChromaDB)
+  VectorStore.query_relevant_rules() finds top 5 rules per file
+       |
+Layer 3: LLM Deep Analysis (Ollama + DeepSeek-Coder)
+  LLMAnalyzer.analyze_code_with_rules() does contextual analysis
+       |
+Layer 3.5: False Positive Validation
+  LLM validates CRITICAL/HIGH regex findings to reduce noise
+       |
+  All findings combined → ScanResult → Reports (JSON + Markdown)
+```
+
+### Graceful Degradation
+
+The scanner works at multiple capability levels:
+
+| Mode | When | What Works |
+|------|------|------------|
+| Full | Ollama running + model pulled | All 3 layers + validation + reports |
+| Degraded | Ollama offline | Regex + complexity only (still useful) |
+| Minimal | No dependencies | Regex scanning only |
+
+### How to Run & Verify Day 5
+
+**Prerequisites**: Day 1-4 setup complete, Ollama running with deepseek-coder:6.7b
+
+#### Verify 1: Full pipeline scan via API
+
+```bash
+# Start the server
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+
+# Run a scan
+curl -s -X POST "http://localhost:8000/api/v1/scan" \
+  -H "Content-Type: application/json" \
+  -d '{"codebase_path":"src/"}' | python -m json.tool
+
+# Wait for completion (LLM analysis takes a few minutes), then:
+curl -s "http://localhost:8000/api/v1/scan/{scan_id}" | python -m json.tool
+```
+
+**Expected**: Response includes findings from all three layers:
+- `regex` findings (pattern matches)
+- `llm` findings (LLM-detected issues)
+- `complexity` findings (overly complex functions)
+- `report_urls` with paths to JSON and Markdown reports
+
+#### Verify 2: Check generated reports
+
+```bash
+# List generated reports
+ls -la outputs/
+
+# View JSON report
+cat outputs/scan_*.json | python -m json.tool | head -30
+
+# View Markdown report
+cat outputs/scan_*.md | head -50
+```
+
+**Expected**: `outputs/` contains `{scan_id}.json` and `{scan_id}.md` files with full scan results.
+
+#### Verify 3: Analyzer directly (no API)
+
+```bash
+python -c "
+from src.core.analyzer import CodeAnalyzer
+
+analyzer = CodeAnalyzer(enable_llm=True)
+result = analyzer.scan_codebase('src/')
+
+print(f'Scan: {result.metadata.scan_id}')
+print(f'Files: {result.scope.files_scanned}')
+print(f'Total findings: {result.summary.total_findings}')
+print(f'Security score: {result.summary.security_score}/100')
+print(f'By severity: {result.summary.by_severity}')
+print()
+for f in result.findings[:5]:
+    print(f'  [{f.severity.value}] {f.title} @ {f.file_path}:{f.line_number}')
+print('Full pipeline OK')
+"
+```
+
+#### Verify 4: Graceful degradation (LLM offline)
+
+```bash
+# Stop Ollama, then:
+python -c "
+from src.core.analyzer import CodeAnalyzer
+
+analyzer = CodeAnalyzer(enable_llm=True)  # Will detect Ollama is offline
+result = analyzer.scan_codebase('src/')
+
+print(f'Findings: {result.summary.total_findings} (regex + complexity only)')
+print(f'Score: {result.summary.security_score}/100')
+print('Degraded mode OK')
+"
+```
+
+### Architecture Notes (Day 5)
+
+```
+Full Pipeline Flow:
+
+  scan_codebase(path)
+       |
+  _collect_files() → list of .py files
+       |
+  ┌────┴─────────────────────────────────────────────┐
+  │  Per file:                                        │
+  │    PatternMatcher.scan_file() → regex matches     │
+  │    TreeSitterParser.parse_file() → AST analysis   │
+  └──────────────────────────────────────────────────┘
+       |
+  _matches_to_findings() → regex findings
+       |
+  ┌────┴─────────────────────────────────────────────┐
+  │  Complexity Detection (per file with AST):        │
+  │    LLMAnalyzer.detect_complexity_issues()         │
+  │    LLMAnalyzer.complexity_to_findings()           │
+  └──────────────────────────────────────────────────┘
+       |
+  ┌────┴─────────────────────────────────────────────┐
+  │  Semantic + LLM (per .py file, if LLM available): │
+  │    VectorStore.query_relevant_rules(code[:2000])  │
+  │    Filter to rules with llm_prompt                │
+  │    LLMAnalyzer.analyze_code_with_rules()          │
+  └──────────────────────────────────────────────────┘
+       |
+  ┌────┴─────────────────────────────────────────────┐
+  │  False Positive Validation (CRITICAL/HIGH only):  │
+  │    LLMAnalyzer.validate_finding() per finding     │
+  └──────────────────────────────────────────────────┘
+       |
+  Combine: validated_regex + llm + complexity
+       |
+  ScanResult → ReportManager.generate_reports()
+       |
+  outputs/{scan_id}.json + outputs/{scan_id}.md
 ```
