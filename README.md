@@ -19,7 +19,7 @@ pip install -r requirements.txt
 | Day | Phase | Status |
 |-----|-------|--------|
 | 1 | Scaffolding, config, models, rules, PDF parser | Complete |
-| 2 | Tree-sitter code analysis engine | Pending |
+| 2 | Tree-sitter code analysis engine + pattern matching | Complete |
 | 3 | LLM integration (Ollama) + ChromaDB | Pending |
 | 4 | FastAPI application + endpoints | Pending |
 | 5 | Full integration (end-to-end) | Pending |
@@ -280,4 +280,144 @@ data/security_rules/
 ├── builtin_rules.json             # 30 OWASP rules (active)
 ├── cwe_rules_placeholder.json     # CWE placeholder (Phase 2)
 └── bandit_rules_placeholder.json  # Bandit placeholder (Phase 2)
+```
+
+---
+
+## Day 2: Code Analysis Engine — Rule Loader, Pattern Matcher, Tree-sitter Parser
+
+### What Was Built
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Rule Loader | `src/core/rule_loader.py` | Loads security rules from JSON files, indexes by ID, filters by severity/category |
+| Pattern Matcher | `src/core/pattern_matcher.py` | Compiles regex patterns from rules, scans files/text/directories for matches |
+| Tree-sitter Parser | `src/core/tree_sitter_parser.py` | Parses Python AST — extracts functions, classes, imports, decorators |
+| Code Analyzer | `src/core/analyzer.py` | Orchestrator that combines all components to scan a codebase and produce findings |
+
+### How to Run & Verify Day 2
+
+**Prerequisites**: Day 1 setup complete (venv activated, dependencies installed)
+
+#### Verify 1: Rule loader
+
+```bash
+python -c "
+from src.core.rule_loader import RuleLoader
+
+loader = RuleLoader()
+count = loader.load_builtin_rules()
+print(f'Loaded {count} builtin rules')
+print(f'Rules with patterns: {len(loader.get_rules_with_patterns())}')
+print(f'Categories: {sorted(loader.get_categories())}')
+print(f'CRITICAL rules: {len(loader.get_rules_by_severity(\"CRITICAL\"))}')
+print('RuleLoader OK')
+"
+```
+
+**Expected**: 30 rules loaded, 25 with patterns, 10 OWASP categories, 8 CRITICAL.
+
+#### Verify 2: Pattern matcher detects vulnerabilities
+
+```bash
+python -c "
+from src.core.rule_loader import RuleLoader
+from src.core.pattern_matcher import PatternMatcher
+
+loader = RuleLoader()
+loader.load_builtin_rules()
+matcher = PatternMatcher(loader.get_rules_with_patterns())
+print(f'Matcher ready with {matcher.rule_count} patterns')
+
+test_code = '''
+import os
+DB_PASSWORD = \"SuperSecret123\"
+os.system(f\"ls {user_input}\")
+query = f\"SELECT * FROM users WHERE id = {uid}\"
+data = pickle.loads(request.data)
+'''
+
+matches = matcher.scan_text(test_code, 'test_vulnerable.py')
+print(f'Found {len(matches)} matches in test code:')
+for m in matches:
+    print(f'  Line {m.line_number}: [{m.rule.severity.value}] {m.rule.title}')
+print('PatternMatcher OK')
+"
+```
+
+**Expected**: 3 matches found — Hard-coded Credentials, OS Command Injection, Insecure Deserialization.
+
+#### Verify 3: Tree-sitter parses Python structure
+
+```bash
+python -c "
+from src.core.tree_sitter_parser import TreeSitterParser
+
+parser = TreeSitterParser()
+test_code = '''
+import os
+from pathlib import Path
+
+class UserService:
+    def get_user(self, user_id: int) -> dict:
+        return db.find(user_id)
+
+@app.get(\"/users\")
+@login_required
+def list_users(request):
+    return UserService().get_all()
+'''
+
+analysis = parser.parse_text(test_code, 'test_service.py')
+print(f'Imports: {len(analysis.imports)}')
+print(f'Classes: {len(analysis.classes)} ({analysis.classes[0].name}, {len(analysis.classes[0].methods)} methods)')
+print(f'Functions: {len(analysis.functions)} ({analysis.functions[0].name})')
+print(f'Decorators on list_users: {analysis.functions[0].decorators}')
+print('TreeSitterParser OK')
+"
+```
+
+**Expected**: 2 imports, 1 class (UserService with 1 method), 1 function (list_users with 2 decorators).
+
+#### Verify 4: Full scan of a codebase
+
+```bash
+python -c "
+from src.core.analyzer import CodeAnalyzer
+
+analyzer = CodeAnalyzer()
+result = analyzer.scan_codebase('src/')
+print(f'Scan ID: {result.metadata.scan_id}')
+print(f'Files scanned: {result.scope.files_scanned}')
+print(f'Lines of code: {result.scope.lines_of_code}')
+print(f'Total findings: {result.summary.total_findings}')
+print(f'Security score: {result.summary.security_score}/100')
+print(f'By severity: {result.summary.by_severity}')
+print('CodeAnalyzer OK')
+"
+```
+
+**Expected**: Scans all .py files under src/, produces findings and a security score.
+
+### Architecture Notes (Day 2)
+
+```
+src/core/
+├── analyzer.py           # Orchestrator: scan codebase -> ScanResult
+├── pattern_matcher.py    # Regex engine: compiled patterns -> matches
+├── rule_loader.py        # Load JSON rules -> SecurityRule objects
+├── tree_sitter_parser.py # AST parser: Python -> functions, classes, imports
+└── pdf_parser.py         # (Day 1) PDF rule extraction
+
+Flow:
+  RuleLoader -> loads rules from JSON
+       |
+  PatternMatcher -> compiles regex patterns from rules
+       |
+  CodeAnalyzer -> for each file:
+       |            1. PatternMatcher.scan_file() -> regex matches
+       |            2. TreeSitterParser.parse_file() -> AST analysis
+       |            3. Convert matches -> Finding objects
+       v
+  ScanResult (findings, summary, metadata)
 ```
