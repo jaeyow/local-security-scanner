@@ -1,0 +1,44 @@
+[
+  {
+    "rule_id": "BANDIT-B101-001",
+    "title": "Assert Used [PLACEHOLDER]",
+    "category": "Bandit Python Security",
+    "severity": "LOW",
+    "description": "PLACEHOLDER - Full Bandit Python rules (~40) to be implemented in Phase 2.",
+    "cwe_id": null,
+    "owasp_category": null,
+    "compliance": {"iso_27001": [], "pci_dss": [], "soc_2": []},
+    "detection": {"pattern": null, "ast_query": null, "llm_prompt": null},
+    "examples": null,
+    "remediation": "Phase 2 implementation pending.",
+    "references": ["https://bandit.readthedocs.io/"]
+  },
+  {
+    "rule_id": "BANDIT-B102-001",
+    "title": "Exec Used [PLACEHOLDER]",
+    "category": "Bandit Python Security",
+    "severity": "HIGH",
+    "description": "PLACEHOLDER - Full Bandit Python rules (~40) to be implemented in Phase 2.",
+    "cwe_id": "CWE-78",
+    "owasp_category": "A03",
+    "compliance": {"iso_27001": [], "pci_dss": [], "soc_2": []},
+    "detection": {"pattern": null, "ast_query": null, "llm_prompt": null},
+    "examples": null,
+    "remediation": "Phase 2 implementation pending.",
+    "references": ["https://bandit.readthedocs.io/"]
+  },
+  {
+    "rule_id": "BANDIT-B301-001",
+    "title": "Pickle Usage [PLACEHOLDER]",
+    "category": "Bandit Python Security",
+    "severity": "HIGH",
+    "description": "PLACEHOLDER - Full Bandit Python rules (~40) to be implemented in Phase 2. See OWASP-A08-001 for current pickle detection.",
+    "cwe_id": "CWE-502",
+    "owasp_category": "A08",
+    "compliance": {"iso_27001": [], "pci_dss": [], "soc_2": []},
+    "detection": {"pattern": null, "ast_query": null, "llm_prompt": null},
+    "examples": null,
+    "remediation": "Phase 2 implementation pending.",
+    "references": ["https://bandit.readthedocs.io/"]
+  }
+]

@@ -1,0 +1,752 @@
+[
+  {
+    "rule_id": "OWASP-A01-001",
+    "title": "Missing Authorization Decorator",
+    "category": "Broken Access Control",
+    "severity": "CRITICAL",
+    "description": "Route handler lacks authorization/authentication decorator. Endpoints without access control checks allow unauthorized users to access protected resources.",
+    "cwe_id": "CWE-862",
+    "owasp_category": "A01",
+    "compliance": {
+      "iso_27001": ["A.9.4.1"],
+      "pci_dss": ["7.1"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": "@app\\.(get|post|put|delete|patch)\\((?!.*@(login_required|requires_auth|auth|permission|jwt_required|token_required))",
+      "ast_query": null,
+      "llm_prompt": "Check if this route handler has any authorization or authentication decorator applied before the function definition."
+    },
+    "examples": {
+      "vulnerable": "@app.get('/admin/users')\ndef list_users():\n    return db.get_all_users()",
+      "secure": "@app.get('/admin/users')\n@login_required\ndef list_users(current_user: User):\n    if not current_user.is_admin:\n        raise HTTPException(403)\n    return db.get_all_users()"
+    },
+    "remediation": "Add authentication and authorization decorators to all route handlers. Use role-based access control (RBAC) to verify permissions.",
+    "references": ["https://owasp.org/Top10/A01_2021-Broken_Access_Control/", "https://cwe.mitre.org/data/definitions/862.html"]
+  },
+  {
+    "rule_id": "OWASP-A01-002",
+    "title": "Insecure Direct Object Reference (IDOR)",
+    "category": "Broken Access Control",
+    "severity": "HIGH",
+    "description": "User-supplied IDs are used directly to access database objects without verifying the requesting user has permission to access that specific resource.",
+    "cwe_id": "CWE-639",
+    "owasp_category": "A01",
+    "compliance": {
+      "iso_27001": ["A.9.4.1", "A.9.4.5"],
+      "pci_dss": ["7.1"],
+      "soc_2": ["CC6.2"]
+    },
+    "detection": {
+      "pattern": "\\.(get|find|query|filter)\\(.*?(user_id|account_id|order_id|record_id).*?request\\.(args|form|json|params)",
+      "ast_query": null,
+      "llm_prompt": "Check if user-supplied IDs are used to fetch database records without verifying the requesting user owns or has access to that record."
+    },
+    "examples": {
+      "vulnerable": "@app.get('/api/orders/{order_id}')\ndef get_order(order_id: int):\n    return db.orders.find(order_id)",
+      "secure": "@app.get('/api/orders/{order_id}')\n@login_required\ndef get_order(order_id: int, current_user: User):\n    order = db.orders.find(order_id)\n    if order.user_id != current_user.id:\n        raise HTTPException(403)\n    return order"
+    },
+    "remediation": "Always verify the requesting user has ownership or permission to access the requested resource. Never trust user-supplied IDs alone.",
+    "references": ["https://owasp.org/Top10/A01_2021-Broken_Access_Control/", "https://cwe.mitre.org/data/definitions/639.html"]
+  },
+  {
+    "rule_id": "OWASP-A01-003",
+    "title": "Path Traversal via User Input",
+    "category": "Broken Access Control",
+    "severity": "CRITICAL",
+    "description": "User input is used to construct file paths without sanitization, allowing attackers to read or write files outside the intended directory.",
+    "cwe_id": "CWE-22",
+    "owasp_category": "A01",
+    "compliance": {
+      "iso_27001": ["A.9.4.5", "A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC6.2"]
+    },
+    "detection": {
+      "pattern": "(open|read|write|Path)\\(.*?(request\\.|user_input|filename|file_path|filepath).*?\\)|os\\.path\\.join\\(.*?(request\\.|user_input)",
+      "ast_query": null,
+      "llm_prompt": "Check if user-supplied input is used in file path construction (open, Path, os.path.join) without sanitization or validation against directory traversal."
+    },
+    "examples": {
+      "vulnerable": "@app.get('/files/{filename}')\ndef get_file(filename: str):\n    return open(f'/data/{filename}').read()",
+      "secure": "from pathlib import Path\n\nBASE_DIR = Path('/data').resolve()\n\n@app.get('/files/{filename}')\ndef get_file(filename: str):\n    safe_path = (BASE_DIR / filename).resolve()\n    if not safe_path.is_relative_to(BASE_DIR):\n        raise HTTPException(400, 'Invalid path')\n    return safe_path.read_text()"
+    },
+    "remediation": "Resolve all file paths and verify they remain within the intended base directory. Use Path.resolve() and is_relative_to() checks.",
+    "references": ["https://owasp.org/Top10/A01_2021-Broken_Access_Control/", "https://cwe.mitre.org/data/definitions/22.html"]
+  },
+  {
+    "rule_id": "OWASP-A01-004",
+    "title": "Permissive CORS Configuration",
+    "category": "Broken Access Control",
+    "severity": "MEDIUM",
+    "description": "CORS is configured to allow all origins (*), exposing the API to cross-origin attacks from any website.",
+    "cwe_id": "CWE-942",
+    "owasp_category": "A01",
+    "compliance": {
+      "iso_27001": ["A.9.4.1"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": "allow_origins\\s*=\\s*\\[\\s*[\"']\\*[\"']\\s*\\]|Access-Control-Allow-Origin.*\\*|CORS\\(.*allow_all",
+      "ast_query": null,
+      "llm_prompt": "Check if CORS is configured with allow_origins=['*'] or equivalent wildcard that permits any origin."
+    },
+    "examples": {
+      "vulnerable": "app.add_middleware(\n    CORSMiddleware,\n    allow_origins=['*'],\n    allow_methods=['*'],\n)",
+      "secure": "app.add_middleware(\n    CORSMiddleware,\n    allow_origins=['https://app.example.com'],\n    allow_methods=['GET', 'POST'],\n)"
+    },
+    "remediation": "Restrict CORS allow_origins to specific trusted domains. Never use wildcard (*) in production.",
+    "references": ["https://owasp.org/Top10/A01_2021-Broken_Access_Control/"]
+  },
+  {
+    "rule_id": "OWASP-A02-001",
+    "title": "Hard-coded Credentials",
+    "category": "Cryptographic Failures",
+    "severity": "CRITICAL",
+    "description": "Passwords, secrets, or credentials are hard-coded directly in source code, making them visible in version control and accessible to anyone with code access.",
+    "cwe_id": "CWE-798",
+    "owasp_category": "A02",
+    "compliance": {
+      "iso_27001": ["A.9.4.3"],
+      "pci_dss": ["6.2.4", "8.2.1"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": "(password|passwd|pwd|secret|token)\\s*=\\s*[\"'][^\"']{4,}[\"']",
+      "ast_query": null,
+      "llm_prompt": "Check if any passwords, secrets, API keys, or credentials are assigned as string literals in the code."
+    },
+    "examples": {
+      "vulnerable": "DB_PASSWORD = \"SuperSecret123!\"\nAPI_TOKEN = \"sk-abc123def456\"",
+      "secure": "import os\nDB_PASSWORD = os.environ.get('DB_PASSWORD')\nAPI_TOKEN = os.environ.get('API_TOKEN')"
+    },
+    "remediation": "Move all credentials to environment variables, a secrets manager (AWS Secrets Manager, Azure Key Vault), or a .env file excluded from version control.",
+    "references": ["https://owasp.org/Top10/A02_2021-Cryptographic_Failures/", "https://cwe.mitre.org/data/definitions/798.html"]
+  },
+  {
+    "rule_id": "OWASP-A02-002",
+    "title": "Hard-coded API Keys",
+    "category": "Cryptographic Failures",
+    "severity": "CRITICAL",
+    "description": "API keys or access tokens are embedded directly in source code.",
+    "cwe_id": "CWE-798",
+    "owasp_category": "A02",
+    "compliance": {
+      "iso_27001": ["A.9.4.3"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": "(api_key|apikey|api_secret|access_key|aws_key|AKIA)\\s*=\\s*[\"'][^\"']{8,}[\"']",
+      "ast_query": null,
+      "llm_prompt": "Check if API keys, access tokens, or service credentials are hard-coded as string literals."
+    },
+    "examples": {
+      "vulnerable": "API_KEY = \"AKIA1234567890ABCDEF\"\nSTRIPE_KEY = \"sk_live_abc123\"",
+      "secure": "import os\nAPI_KEY = os.environ['AWS_ACCESS_KEY_ID']\nSTRIPE_KEY = os.environ['STRIPE_SECRET_KEY']"
+    },
+    "remediation": "Store API keys in environment variables or a secrets manager. Never commit keys to source control.",
+    "references": ["https://owasp.org/Top10/A02_2021-Cryptographic_Failures/", "https://cwe.mitre.org/data/definitions/798.html"]
+  },
+  {
+    "rule_id": "OWASP-A02-003",
+    "title": "Weak Hashing Algorithm (MD5/SHA1)",
+    "category": "Cryptographic Failures",
+    "severity": "HIGH",
+    "description": "MD5 or SHA1 are used for hashing passwords or sensitive data. These algorithms have known collision vulnerabilities and are considered cryptographically broken.",
+    "cwe_id": "CWE-327",
+    "owasp_category": "A02",
+    "compliance": {
+      "iso_27001": ["A.10.1.1"],
+      "pci_dss": ["4.2"],
+      "soc_2": ["CC6.7"]
+    },
+    "detection": {
+      "pattern": "hashlib\\.(md5|sha1)\\(|MD5\\.new\\(|SHA\\.new\\(|md5\\(|sha1\\(",
+      "ast_query": null,
+      "llm_prompt": "Check if MD5 or SHA1 are used for hashing, especially for passwords or sensitive data."
+    },
+    "examples": {
+      "vulnerable": "import hashlib\nhashed = hashlib.md5(password.encode()).hexdigest()",
+      "secure": "from werkzeug.security import generate_password_hash\nhashed = generate_password_hash(password, method='pbkdf2:sha256')"
+    },
+    "remediation": "Use bcrypt, scrypt, or PBKDF2 for password hashing. Use SHA-256 or SHA-3 for general-purpose hashing.",
+    "references": ["https://owasp.org/Top10/A02_2021-Cryptographic_Failures/", "https://cwe.mitre.org/data/definitions/327.html"]
+  },
+  {
+    "rule_id": "OWASP-A02-004",
+    "title": "Weak Encryption Algorithm (DES/RC4)",
+    "category": "Cryptographic Failures",
+    "severity": "HIGH",
+    "description": "DES, 3DES, RC4, or other deprecated ciphers are used for encryption. These are vulnerable to known attacks.",
+    "cwe_id": "CWE-327",
+    "owasp_category": "A02",
+    "compliance": {
+      "iso_27001": ["A.10.1.1"],
+      "pci_dss": ["4.2"],
+      "soc_2": ["CC6.7"]
+    },
+    "detection": {
+      "pattern": "DES\\.new\\(|ARC4\\.new\\(|DES3\\.new\\(|Blowfish\\.new\\(|RC4|algorithms\\.TripleDES|PROTOCOL_TLSv1[^_2]",
+      "ast_query": null,
+      "llm_prompt": "Check if deprecated or weak encryption algorithms (DES, 3DES, RC4, Blowfish) are used."
+    },
+    "examples": {
+      "vulnerable": "from Crypto.Cipher import DES\ncipher = DES.new(key, DES.MODE_ECB)",
+      "secure": "from cryptography.fernet import Fernet\nkey = Fernet.generate_key()\ncipher = Fernet(key)"
+    },
+    "remediation": "Use AES-256-GCM or Fernet (which wraps AES-128-CBC with HMAC) for symmetric encryption. Use RSA-2048+ or ECDSA for asymmetric.",
+    "references": ["https://owasp.org/Top10/A02_2021-Cryptographic_Failures/", "https://cwe.mitre.org/data/definitions/327.html"]
+  },
+  {
+    "rule_id": "OWASP-A02-005",
+    "title": "Insecure Random Number Generator",
+    "category": "Cryptographic Failures",
+    "severity": "MEDIUM",
+    "description": "Python's random module is used for security-sensitive operations. The random module uses a PRNG (Mersenne Twister) that is predictable and not suitable for cryptographic use.",
+    "cwe_id": "CWE-330",
+    "owasp_category": "A02",
+    "compliance": {
+      "iso_27001": ["A.10.1.1"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC6.7"]
+    },
+    "detection": {
+      "pattern": "random\\.(random|randint|choice|randrange|sample|getrandbits)\\(",
+      "ast_query": null,
+      "llm_prompt": "Check if Python's random module (not secrets or os.urandom) is used for generating tokens, passwords, session IDs, or other security-sensitive values."
+    },
+    "examples": {
+      "vulnerable": "import random\ntoken = ''.join(random.choice('abcdef0123456789') for _ in range(32))",
+      "secure": "import secrets\ntoken = secrets.token_hex(32)"
+    },
+    "remediation": "Use the secrets module for tokens and security-sensitive values. Use os.urandom() for cryptographic randomness.",
+    "references": ["https://owasp.org/Top10/A02_2021-Cryptographic_Failures/", "https://cwe.mitre.org/data/definitions/330.html"]
+  },
+  {
+    "rule_id": "OWASP-A03-001",
+    "title": "SQL Injection via String Concatenation",
+    "category": "Injection",
+    "severity": "CRITICAL",
+    "description": "SQL queries are built using string concatenation or f-strings with user input, allowing attackers to inject arbitrary SQL commands.",
+    "cwe_id": "CWE-89",
+    "owasp_category": "A03",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "(execute|cursor|query|raw)\\(\\s*f[\"'].*?(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER)|\\+\\s*.*?(SELECT|INSERT|UPDATE|DELETE)|\\.format\\(.*?(SELECT|INSERT|UPDATE|DELETE)",
+      "ast_query": null,
+      "llm_prompt": "Check if SQL queries are built using string concatenation, f-strings, or .format() with user-supplied input instead of parameterized queries."
+    },
+    "examples": {
+      "vulnerable": "cursor.execute(f\"SELECT * FROM users WHERE id = {user_id}\")\ncursor.execute(\"SELECT * FROM users WHERE name = '\" + username + \"'\")",
+      "secure": "cursor.execute(\"SELECT * FROM users WHERE id = %s\", (user_id,))\ncursor.execute(\"SELECT * FROM users WHERE name = ?\", (username,))"
+    },
+    "remediation": "Always use parameterized queries or prepared statements. Use an ORM (SQLAlchemy, Django ORM) which handles parameterization automatically.",
+    "references": ["https://owasp.org/Top10/A03_2021-Injection/", "https://cwe.mitre.org/data/definitions/89.html"]
+  },
+  {
+    "rule_id": "OWASP-A03-002",
+    "title": "OS Command Injection",
+    "category": "Injection",
+    "severity": "CRITICAL",
+    "description": "User input is passed to system command execution functions without sanitization, allowing arbitrary command execution on the server.",
+    "cwe_id": "CWE-78",
+    "owasp_category": "A03",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "os\\.system\\(|os\\.popen\\(|subprocess\\.call\\(.*shell\\s*=\\s*True|subprocess\\.run\\(.*shell\\s*=\\s*True|subprocess\\.Popen\\(.*shell\\s*=\\s*True",
+      "ast_query": null,
+      "llm_prompt": "Check if user input is passed to os.system(), os.popen(), or subprocess with shell=True."
+    },
+    "examples": {
+      "vulnerable": "import os\nos.system(f\"ping {user_input}\")\nsubprocess.run(f\"ls {directory}\", shell=True)",
+      "secure": "import subprocess\nimport shlex\nsubprocess.run(['ping', '-c', '1', shlex.quote(user_input)])"
+    },
+    "remediation": "Never use shell=True with user input. Pass commands as lists to subprocess. Use shlex.quote() for any necessary shell arguments.",
+    "references": ["https://owasp.org/Top10/A03_2021-Injection/", "https://cwe.mitre.org/data/definitions/78.html"]
+  },
+  {
+    "rule_id": "OWASP-A03-003",
+    "title": "Cross-Site Scripting (XSS)",
+    "category": "Injection",
+    "severity": "HIGH",
+    "description": "User input is rendered in HTML output without proper escaping, allowing injection of malicious scripts.",
+    "cwe_id": "CWE-79",
+    "owasp_category": "A03",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "Markup\\(|mark_safe\\(|\\|safe|autoescape\\s*=\\s*False|autoescape\\s+off|render_template_string\\(",
+      "ast_query": null,
+      "llm_prompt": "Check if user input is rendered in HTML without escaping, or if auto-escaping is disabled in templates."
+    },
+    "examples": {
+      "vulnerable": "from markupsafe import Markup\nreturn Markup(f\"<p>Hello {user_name}</p>\")",
+      "secure": "from markupsafe import escape\nreturn f\"<p>Hello {escape(user_name)}</p>\""
+    },
+    "remediation": "Always escape user input before rendering in HTML. Use template engine auto-escaping. Never use mark_safe() or Markup() with user input.",
+    "references": ["https://owasp.org/Top10/A03_2021-Injection/", "https://cwe.mitre.org/data/definitions/79.html"]
+  },
+  {
+    "rule_id": "OWASP-A03-004",
+    "title": "LDAP Injection",
+    "category": "Injection",
+    "severity": "HIGH",
+    "description": "User input is used in LDAP queries without sanitization, allowing manipulation of directory lookups.",
+    "cwe_id": "CWE-90",
+    "owasp_category": "A03",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "ldap\\.search\\(.*?\\+|ldap\\.search_s\\(.*?f[\"']|search_filter.*?%s.*?%|search_filter.*?\\.format\\(",
+      "ast_query": null,
+      "llm_prompt": "Check if user input is embedded in LDAP search filters without proper escaping."
+    },
+    "examples": {
+      "vulnerable": "search_filter = f\"(uid={username})\"\nldap_conn.search_s(base_dn, ldap.SCOPE_SUBTREE, search_filter)",
+      "secure": "from ldap3.utils.conv import escape_filter_chars\nsafe_user = escape_filter_chars(username)\nsearch_filter = f\"(uid={safe_user})\""
+    },
+    "remediation": "Use LDAP escape functions to sanitize user input before building search filters.",
+    "references": ["https://owasp.org/Top10/A03_2021-Injection/", "https://cwe.mitre.org/data/definitions/90.html"]
+  },
+  {
+    "rule_id": "OWASP-A04-001",
+    "title": "Missing Rate Limiting",
+    "category": "Insecure Design",
+    "severity": "MEDIUM",
+    "description": "API endpoints lack rate limiting, making them vulnerable to brute force attacks, credential stuffing, and denial of service.",
+    "cwe_id": "CWE-770",
+    "owasp_category": "A04",
+    "compliance": {
+      "iso_27001": ["A.9.4.2"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": null,
+      "ast_query": null,
+      "llm_prompt": "Check if login, authentication, or sensitive API endpoints have rate limiting applied. Look for slowapi, ratelimit, or custom throttling decorators."
+    },
+    "examples": {
+      "vulnerable": "@app.post('/login')\ndef login(credentials: LoginRequest):\n    return authenticate(credentials)",
+      "secure": "from slowapi import Limiter\nlimiter = Limiter(key_func=get_remote_address)\n\n@app.post('/login')\n@limiter.limit('5/minute')\ndef login(request: Request, credentials: LoginRequest):\n    return authenticate(credentials)"
+    },
+    "remediation": "Apply rate limiting to authentication endpoints (5-10 attempts per minute) and API endpoints. Use slowapi or a reverse proxy (nginx) for rate limiting.",
+    "references": ["https://owasp.org/Top10/A04_2021-Insecure_Design/"]
+  },
+  {
+    "rule_id": "OWASP-A04-002",
+    "title": "Missing Input Length Validation",
+    "category": "Insecure Design",
+    "severity": "LOW",
+    "description": "User inputs lack maximum length constraints, potentially allowing oversized payloads that cause denial of service or buffer issues.",
+    "cwe_id": "CWE-20",
+    "owasp_category": "A04",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": null,
+      "ast_query": null,
+      "llm_prompt": "Check if Pydantic models, form fields, or request parameters have max_length or maximum size constraints defined."
+    },
+    "examples": {
+      "vulnerable": "class UserInput(BaseModel):\n    username: str\n    comment: str",
+      "secure": "class UserInput(BaseModel):\n    username: str = Field(max_length=50)\n    comment: str = Field(max_length=5000)"
+    },
+    "remediation": "Add max_length constraints to all string fields in Pydantic models and form inputs.",
+    "references": ["https://owasp.org/Top10/A04_2021-Insecure_Design/"]
+  },
+  {
+    "rule_id": "OWASP-A05-001",
+    "title": "Debug Mode Enabled in Production",
+    "category": "Security Misconfiguration",
+    "severity": "HIGH",
+    "description": "Application is running with debug mode enabled, which exposes stack traces, internal paths, and potentially allows code execution.",
+    "cwe_id": "CWE-489",
+    "owasp_category": "A05",
+    "compliance": {
+      "iso_27001": ["A.12.1.4"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.1"]
+    },
+    "detection": {
+      "pattern": "debug\\s*=\\s*True|DEBUG\\s*=\\s*True|app\\.run\\(.*debug\\s*=\\s*True|FLASK_DEBUG\\s*=\\s*1",
+      "ast_query": null,
+      "llm_prompt": "Check if debug mode is hardcoded to True in application settings or server startup."
+    },
+    "examples": {
+      "vulnerable": "app.run(host='0.0.0.0', debug=True)\nDEBUG = True",
+      "secure": "import os\nDEBUG = os.environ.get('DEBUG', 'false').lower() == 'true'\napp.run(host='0.0.0.0', debug=DEBUG)"
+    },
+    "remediation": "Never hardcode debug=True. Use environment variables to control debug mode. Ensure debug is disabled in production deployments.",
+    "references": ["https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"]
+  },
+  {
+    "rule_id": "OWASP-A05-002",
+    "title": "Default or Weak Credentials in Code",
+    "category": "Security Misconfiguration",
+    "severity": "HIGH",
+    "description": "Default usernames/passwords like admin/admin or test/test are present in application code.",
+    "cwe_id": "CWE-1392",
+    "owasp_category": "A05",
+    "compliance": {
+      "iso_27001": ["A.9.4.3"],
+      "pci_dss": ["2.1", "8.2.1"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": "(admin|root|test|default|guest)[\"']\\s*,\\s*[\"'](admin|password|root|test|default|1234|pass)",
+      "ast_query": null,
+      "llm_prompt": "Check for default or common username/password combinations hard-coded in the application."
+    },
+    "examples": {
+      "vulnerable": "DEFAULT_ADMIN = ('admin', 'admin123')\nif username == 'root' and password == 'password':",
+      "secure": "# No default credentials in code\n# Require strong passwords at setup\nadmin_password = os.environ['ADMIN_PASSWORD']"
+    },
+    "remediation": "Remove all default credentials from code. Require secure password setup on first deployment.",
+    "references": ["https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"]
+  },
+  {
+    "rule_id": "OWASP-A05-003",
+    "title": "Verbose Error Messages Exposing Internals",
+    "category": "Security Misconfiguration",
+    "severity": "MEDIUM",
+    "description": "Exception details, stack traces, or internal paths are returned to users in error responses.",
+    "cwe_id": "CWE-209",
+    "owasp_category": "A05",
+    "compliance": {
+      "iso_27001": ["A.18.1.3"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.1"]
+    },
+    "detection": {
+      "pattern": "traceback\\.format_exc\\(|str\\(exception\\)|str\\(e\\).*?return|raise.*?detail=.*?str\\(e\\)|print\\(.*traceback",
+      "ast_query": null,
+      "llm_prompt": "Check if raw exception messages, stack traces, or internal error details are returned in HTTP responses to users."
+    },
+    "examples": {
+      "vulnerable": "except Exception as e:\n    return {'error': str(e), 'trace': traceback.format_exc()}",
+      "secure": "except Exception as e:\n    logger.exception('Internal error')\n    return {'error': 'An internal error occurred'}"
+    },
+    "remediation": "Log full error details server-side. Return generic error messages to users. Never expose stack traces or internal paths in responses.",
+    "references": ["https://owasp.org/Top10/A05_2021-Security_Misconfiguration/", "https://cwe.mitre.org/data/definitions/209.html"]
+  },
+  {
+    "rule_id": "OWASP-A06-001",
+    "title": "Known Vulnerable Import (telnetlib)",
+    "category": "Vulnerable and Outdated Components",
+    "severity": "MEDIUM",
+    "description": "Importing modules known to use insecure protocols (telnetlib, ftplib) indicates use of unencrypted communication.",
+    "cwe_id": "CWE-327",
+    "owasp_category": "A06",
+    "compliance": {
+      "iso_27001": ["A.10.1.1"],
+      "pci_dss": ["4.2"],
+      "soc_2": ["CC6.7"]
+    },
+    "detection": {
+      "pattern": "import\\s+telnetlib|from\\s+telnetlib|import\\s+ftplib|from\\s+ftplib",
+      "ast_query": null,
+      "llm_prompt": "Check if insecure protocol libraries like telnetlib or ftplib are imported."
+    },
+    "examples": {
+      "vulnerable": "import telnetlib\nconn = telnetlib.Telnet('server.example.com')",
+      "secure": "import paramiko\nssh = paramiko.SSHClient()\nssh.connect('server.example.com')"
+    },
+    "remediation": "Replace telnet with SSH (paramiko). Replace FTP with SFTP or HTTPS file transfer.",
+    "references": ["https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"]
+  },
+  {
+    "rule_id": "OWASP-A06-002",
+    "title": "Outdated TLS Protocol Version",
+    "category": "Vulnerable and Outdated Components",
+    "severity": "HIGH",
+    "description": "TLS 1.0 or 1.1 is explicitly used. These versions have known vulnerabilities and are deprecated.",
+    "cwe_id": "CWE-327",
+    "owasp_category": "A06",
+    "compliance": {
+      "iso_27001": ["A.10.1.1"],
+      "pci_dss": ["4.2"],
+      "soc_2": ["CC6.7"]
+    },
+    "detection": {
+      "pattern": "PROTOCOL_TLSv1[^_23]|TLSv1_0|ssl\\.PROTOCOL_SSLv[23]|SSLv2|SSLv3|TLSVersion\\.TLSv1(?!_[23])",
+      "ast_query": null,
+      "llm_prompt": "Check if TLS 1.0, TLS 1.1, SSLv2, or SSLv3 protocols are explicitly configured."
+    },
+    "examples": {
+      "vulnerable": "import ssl\ncontext = ssl.SSLContext(ssl.PROTOCOL_TLSv1)",
+      "secure": "import ssl\ncontext = ssl.create_default_context()\ncontext.minimum_version = ssl.TLSVersion.TLSv1_2"
+    },
+    "remediation": "Use TLS 1.2 or higher. Use ssl.create_default_context() which enforces secure defaults.",
+    "references": ["https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"]
+  },
+  {
+    "rule_id": "OWASP-A07-001",
+    "title": "Weak Password Validation",
+    "category": "Identification and Authentication Failures",
+    "severity": "MEDIUM",
+    "description": "Password validation accepts short or simple passwords without enforcing minimum complexity requirements.",
+    "cwe_id": "CWE-521",
+    "owasp_category": "A07",
+    "compliance": {
+      "iso_27001": ["A.9.4.3"],
+      "pci_dss": ["8.2.3"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": "len\\(password\\)\\s*[<>]=?\\s*[1-7]\\b|min_length\\s*=\\s*[1-7]\\b",
+      "ast_query": null,
+      "llm_prompt": "Check if password validation enforces a minimum length of at least 8 characters (12+ preferred) and includes complexity requirements."
+    },
+    "examples": {
+      "vulnerable": "if len(password) < 4:\n    raise ValueError('Password too short')",
+      "secure": "import re\ndef validate_password(password: str) -> bool:\n    if len(password) < 12:\n        return False\n    if not re.search(r'[A-Z]', password):\n        return False\n    if not re.search(r'[0-9]', password):\n        return False\n    return True"
+    },
+    "remediation": "Enforce minimum password length of 12+ characters. Consider using zxcvbn for strength estimation rather than rigid complexity rules.",
+    "references": ["https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"]
+  },
+  {
+    "rule_id": "OWASP-A07-002",
+    "title": "Missing Multi-Factor Authentication Check",
+    "category": "Identification and Authentication Failures",
+    "severity": "MEDIUM",
+    "description": "Login flow does not include multi-factor authentication verification for privileged or sensitive accounts.",
+    "cwe_id": "CWE-308",
+    "owasp_category": "A07",
+    "compliance": {
+      "iso_27001": ["A.9.4.2"],
+      "pci_dss": ["8.3.1"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": null,
+      "ast_query": null,
+      "llm_prompt": "Check if the login/authentication flow includes MFA verification. Look for TOTP, OTP, or second-factor checks after initial password verification."
+    },
+    "examples": {
+      "vulnerable": "def login(username, password):\n    user = authenticate(username, password)\n    if user:\n        return create_session(user)",
+      "secure": "def login(username, password):\n    user = authenticate(username, password)\n    if user and user.mfa_enabled:\n        return request_mfa_verification(user)\n    return create_session(user)"
+    },
+    "remediation": "Implement MFA for privileged accounts. Support TOTP (Google Authenticator) or WebAuthn for second factor.",
+    "references": ["https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"]
+  },
+  {
+    "rule_id": "OWASP-A07-003",
+    "title": "Session Fixation Vulnerability",
+    "category": "Identification and Authentication Failures",
+    "severity": "HIGH",
+    "description": "Session ID is not regenerated after successful login, allowing session fixation attacks.",
+    "cwe_id": "CWE-384",
+    "owasp_category": "A07",
+    "compliance": {
+      "iso_27001": ["A.9.4.2"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC6.1"]
+    },
+    "detection": {
+      "pattern": null,
+      "ast_query": null,
+      "llm_prompt": "Check if the session ID is regenerated after successful authentication. Look for session.regenerate(), session.cycle(), or creation of a new session after login."
+    },
+    "examples": {
+      "vulnerable": "def login(request):\n    user = authenticate(request)\n    request.session['user_id'] = user.id  # Same session ID",
+      "secure": "def login(request):\n    user = authenticate(request)\n    request.session.flush()  # Destroy old session\n    request.session['user_id'] = user.id  # New session ID"
+    },
+    "remediation": "Always regenerate the session ID after authentication. Destroy the old session completely before creating a new one.",
+    "references": ["https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/", "https://cwe.mitre.org/data/definitions/384.html"]
+  },
+  {
+    "rule_id": "OWASP-A08-001",
+    "title": "Insecure Deserialization (pickle)",
+    "category": "Software and Data Integrity Failures",
+    "severity": "CRITICAL",
+    "description": "pickle.loads() or pickle.load() is used on untrusted data. Pickle can execute arbitrary code during deserialization.",
+    "cwe_id": "CWE-502",
+    "owasp_category": "A08",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "pickle\\.loads?\\(|cPickle\\.loads?\\(|shelve\\.open\\(|marshal\\.loads?\\(",
+      "ast_query": null,
+      "llm_prompt": "Check if pickle, cPickle, shelve, or marshal is used to deserialize data from untrusted sources."
+    },
+    "examples": {
+      "vulnerable": "import pickle\ndata = pickle.loads(request.data)",
+      "secure": "import json\ndata = json.loads(request.data)"
+    },
+    "remediation": "Never use pickle on untrusted data. Use JSON, MessagePack, or Protocol Buffers for serialization. If pickle is necessary, use hmac signing to verify integrity.",
+    "references": ["https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/", "https://cwe.mitre.org/data/definitions/502.html"]
+  },
+  {
+    "rule_id": "OWASP-A08-002",
+    "title": "Unsafe YAML Loading",
+    "category": "Software and Data Integrity Failures",
+    "severity": "HIGH",
+    "description": "yaml.load() is used without specifying a safe Loader. The default loader can execute arbitrary Python objects.",
+    "cwe_id": "CWE-502",
+    "owasp_category": "A08",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "yaml\\.load\\((?!.*Loader\\s*=\\s*yaml\\.SafeLoader)(?!.*Loader\\s*=\\s*SafeLoader)",
+      "ast_query": null,
+      "llm_prompt": "Check if yaml.load() is called without specifying Loader=yaml.SafeLoader."
+    },
+    "examples": {
+      "vulnerable": "import yaml\ndata = yaml.load(file_content)",
+      "secure": "import yaml\ndata = yaml.safe_load(file_content)"
+    },
+    "remediation": "Use yaml.safe_load() or yaml.load(data, Loader=yaml.SafeLoader) instead of yaml.load().",
+    "references": ["https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"]
+  },
+  {
+    "rule_id": "OWASP-A09-001",
+    "title": "Sensitive Data in Log Output",
+    "category": "Security Logging and Monitoring Failures",
+    "severity": "HIGH",
+    "description": "Passwords, tokens, credit card numbers, or other sensitive data are written to log output.",
+    "cwe_id": "CWE-532",
+    "owasp_category": "A09",
+    "compliance": {
+      "iso_27001": ["A.18.1.3"],
+      "pci_dss": ["3.2.1", "10.3"],
+      "soc_2": ["CC7.1"]
+    },
+    "detection": {
+      "pattern": "(log|logger|logging)\\.(info|debug|warning|error)\\(.*?(password|secret|token|api_key|credit_card|ssn|cvv)",
+      "ast_query": null,
+      "llm_prompt": "Check if sensitive data (passwords, tokens, API keys, credit card numbers, SSNs) is being logged."
+    },
+    "examples": {
+      "vulnerable": "logger.info(f\"User login: {username}, password: {password}\")\nlogger.debug(f\"API call with token: {api_token}\")",
+      "secure": "logger.info(f\"User login: {username}\")\nlogger.debug(\"API call with token: [REDACTED]\")"
+    },
+    "remediation": "Never log sensitive data. Redact or mask credentials, tokens, and PII before logging. Use structured logging with explicit field selection.",
+    "references": ["https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/", "https://cwe.mitre.org/data/definitions/532.html"]
+  },
+  {
+    "rule_id": "OWASP-A09-002",
+    "title": "Missing Security Event Logging",
+    "category": "Security Logging and Monitoring Failures",
+    "severity": "MEDIUM",
+    "description": "Authentication failures, authorization failures, or other security-relevant events are not being logged.",
+    "cwe_id": "CWE-778",
+    "owasp_category": "A09",
+    "compliance": {
+      "iso_27001": ["A.12.4.1"],
+      "pci_dss": ["10.2"],
+      "soc_2": ["CC7.1", "CC7.2"]
+    },
+    "detection": {
+      "pattern": null,
+      "ast_query": null,
+      "llm_prompt": "Check if authentication failures, authorization denials, and other security events are being logged with sufficient detail (who, what, when, outcome)."
+    },
+    "examples": {
+      "vulnerable": "def login(username, password):\n    user = authenticate(username, password)\n    if not user:\n        raise HTTPException(401)\n    return create_token(user)",
+      "secure": "def login(username, password):\n    user = authenticate(username, password)\n    if not user:\n        logger.warning(f\"Failed login attempt for user: {username}\")\n        raise HTTPException(401)\n    logger.info(f\"Successful login: {username}\")\n    return create_token(user)"
+    },
+    "remediation": "Log all authentication attempts (success and failure), authorization failures, and data access events. Include timestamp, user, action, and outcome.",
+    "references": ["https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"]
+  },
+  {
+    "rule_id": "OWASP-A09-003",
+    "title": "Log Injection Vulnerability",
+    "category": "Security Logging and Monitoring Failures",
+    "severity": "MEDIUM",
+    "description": "User input is logged without sanitization, allowing attackers to inject fake log entries or CRLF sequences.",
+    "cwe_id": "CWE-117",
+    "owasp_category": "A09",
+    "compliance": {
+      "iso_27001": ["A.12.4.1"],
+      "pci_dss": ["10.3"],
+      "soc_2": ["CC7.1"]
+    },
+    "detection": {
+      "pattern": "(log|logger|logging)\\.(info|debug|warning|error)\\(.*?f[\"'].*?(request\\.|user_input|username|email)",
+      "ast_query": null,
+      "llm_prompt": "Check if user-supplied input is logged directly without sanitizing newlines or special characters that could forge log entries."
+    },
+    "examples": {
+      "vulnerable": "logger.info(f\"Search query: {request.args['q']}\")",
+      "secure": "sanitized = request.args['q'].replace('\\n', '').replace('\\r', '')\nlogger.info(f\"Search query: {sanitized}\")"
+    },
+    "remediation": "Sanitize user input before logging by removing newlines and control characters. Use structured logging (JSON format) to prevent log injection.",
+    "references": ["https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/", "https://cwe.mitre.org/data/definitions/117.html"]
+  },
+  {
+    "rule_id": "OWASP-A10-001",
+    "title": "Server-Side Request Forgery (SSRF)",
+    "category": "Server-Side Request Forgery",
+    "severity": "HIGH",
+    "description": "User-supplied URLs are fetched by the server without validation, allowing attackers to make requests to internal services.",
+    "cwe_id": "CWE-918",
+    "owasp_category": "A10",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "requests\\.(get|post|put|delete|head|patch)\\(.*?(request\\.|user_input|url_param)|urllib\\.request\\.urlopen\\(.*?request\\.",
+      "ast_query": null,
+      "llm_prompt": "Check if user-supplied URLs are passed to requests.get(), urllib, or similar HTTP clients without validation against internal/private IP ranges."
+    },
+    "examples": {
+      "vulnerable": "import requests\nurl = request.args['url']\nresponse = requests.get(url)",
+      "secure": "from urllib.parse import urlparse\nimport ipaddress\n\ndef is_safe_url(url: str) -> bool:\n    parsed = urlparse(url)\n    if parsed.scheme not in ('http', 'https'):\n        return False\n    try:\n        ip = ipaddress.ip_address(parsed.hostname)\n        return ip.is_global\n    except ValueError:\n        return True  # Hostname, not IP\n\nif is_safe_url(user_url):\n    response = requests.get(user_url)"
+    },
+    "remediation": "Validate user-supplied URLs against an allowlist. Block requests to private IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, 169.254.x). Use URL parsing to extract and validate hostnames.",
+    "references": ["https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_(SSRF)/", "https://cwe.mitre.org/data/definitions/918.html"]
+  },
+  {
+    "rule_id": "OWASP-A10-002",
+    "title": "Internal Network Access via User Input",
+    "category": "Server-Side Request Forgery",
+    "severity": "CRITICAL",
+    "description": "Application makes HTTP requests to internal services (localhost, 127.0.0.1, private IPs) based on user-controlled input.",
+    "cwe_id": "CWE-918",
+    "owasp_category": "A10",
+    "compliance": {
+      "iso_27001": ["A.14.2.5"],
+      "pci_dss": ["6.2.4"],
+      "soc_2": ["CC7.2"]
+    },
+    "detection": {
+      "pattern": "(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.).*?(request\\.|user|param|input)",
+      "ast_query": null,
+      "llm_prompt": "Check if the application can be tricked into making requests to internal network addresses (localhost, 127.0.0.1, private IP ranges) via user-controlled parameters."
+    },
+    "examples": {
+      "vulnerable": "@app.get('/proxy')\ndef proxy(url: str):\n    return requests.get(url).text  # Could hit localhost:6379",
+      "secure": "BLOCKED_RANGES = ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']\n\n@app.get('/proxy')\ndef proxy(url: str):\n    if any(is_in_range(url, r) for r in BLOCKED_RANGES):\n        raise HTTPException(400, 'Blocked URL')\n    return requests.get(url).text"
+    },
+    "remediation": "Block all requests to private/internal IP ranges. Use an allowlist of permitted external domains when possible.",
+    "references": ["https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_(SSRF)/"]
+  }
+]
